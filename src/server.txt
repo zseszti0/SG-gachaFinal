@@ -1,0 +1,447 @@
+//connect to modules express and sqlite3, enable cors (data sending thingy of node.js)
+const express = require('express');
+const socketIo = require('socket.io');
+const bodyParser = require('body-parser');
+const sqlite3 = require('sqlite3').verbose();
+
+
+const app = express();
+const http = require('http');
+const server = http.createServer(app);
+const io = socketIo(server);
+
+
+
+const cors = require('cors');
+const { LIMIT_FUNCTION_ARG } = require('sqlite3');
+app.use(cors());
+app.use(bodyParser.json());
+
+// connect to us client
+// connect to us client
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/home/Documents/SGgacha/src/client.js');
+});
+
+
+const nodemailer = require("nodemailer");
+const { connected } = require('process');
+const { log } = require('console');
+// Create a transporter using Gmail's SMTP server
+const transporter = nodemailer.createTransport({
+  service: "Gmail",
+  auth: {
+    user: "sagvarigacha.tetms@gmail.com",
+    pass: "grlz mrwf qiau cjvi",
+  }, 
+});
+
+
+//DB------------------------------------
+// create the db, accounts is the beta test
+let db = new sqlite3.Database('Sagvari.db');
+let table =""
+
+let tableStructures = {
+  rolls : "(id INTEGER PRIMARY KEY, history TEXT, pity4S INTEGER DEFAULT 0, pity5S INTEGER DEFAULT 0, pityUR INTEGER DEFAULT 0)",
+  account : "(id INTEGER PRIMARY KEY, username TEXT, email TEXT, password TEXT, level INTEGER DEFAULT 1, xp INTEGER DEFAULT 1, gachaCurrency INTEGER DEFAULT 0, tickets INTEGER DEFAULT 0)",
+  deck : "(id  INTEGER PRIMARY KEY, deckarray0 TEXT, deckarray1 TEXT, deckarray2 TEXT, deckarray3 TEXT, deckname0 TEXT DEFAULT myDeck1, deckname1 TEXT DEFAULT myDeck2, deckname2 TEXT DEFAULT myDeck3, deckname3 TEXT DEFAULT myDeck4)"
+
+}
+
+
+// Initialize the database with a table if it doesn't exist
+db.run(`CREATE TABLE IF NOT EXISTS account ${tableStructures.account}`);
+db.run(`CREATE TABLE IF NOT EXISTS rolls ${tableStructures.rolls}`);
+db.run(`CREATE TABLE IF NOT EXISTS deck ${tableStructures.deck}`);
+
+
+//SOCKET-----------------------------
+
+//io.emit('update', n); 
+function getValueFromDB(columnName,id,tableName){
+  db.get(`SELECT ${columnName} FROM ${tableName} WHERE id = (?)`,[id],(err, row) => {
+    //console.log("rows: ",row);
+    if(columnName == "*"){
+      console.log("sent: "+columnName,row);
+      io.emit(columnName, row)
+    }
+    else if(columnName != ""){
+      //console.log("sent: "+columnName,row[columnName]);
+      io.emit(columnName, row[columnName])
+      
+    }
+    //console.log("result: ",result);
+  });
+}
+// Socket.io connection event
+function getAccountInfoFromDB(email,id){
+  var data = {
+    account: {},
+    rows: {},
+    deck: {},
+    id: id
+  }
+  db.get(`SELECT * FROM account WHERE email = (?)`,email,(err, row) => {
+    console.log("row: ",row);
+    data["account"] = row
+    console.log(row.id);
+    db.get(`SELECT * FROM rolls WHERE id = (?)`,row.id,(err, rows) => {
+      data["rolls"] = rows
+      console.log("rows: ",rows);
+      db.get(`SELECT * FROM deck WHERE id = (?)`,row.id,(err, rows) => {
+        data["deck"] = rows
+        console.log("rows: ",rows);
+        io.emit("getAccountData", data)
+      });
+    });
+  });
+}
+app.post('/verifyEmail', (req, res) => { 
+  const email = req.body.email; 
+  const username = req.body.username
+  sendVerificationEmail(email,username)
+});
+let verificationCodes = {}
+app.post('/verifyCode', (req, res) => { 
+  const code = req.body.code;
+  const email = req.body.email;
+  const username = req.body.username
+  const password = req.body.password
+  //console.log(verificationCodes[email]);
+  console.log(req.body);
+  if (code == verificationCodes[email]){
+    console.log("sucsessful signup");
+    res.json(verificationCodes[email]);
+
+    makeNewAccount(email,password,username)
+    delete verificationCodes[email]
+  }
+  else{
+    console.log("wrong code");
+    res.json("wrong code");
+  }
+});
+function generateVerificationCode(length) {
+  const characters = '0123456789'; // Define the characters to use for the code
+  let code = '';
+
+  for (let i = 0; i < length; i++) {
+    const randomIndex = Math.floor(Math.random() * characters.length);
+    code += characters.charAt(randomIndex);
+  }
+  return code;
+}
+function sendVerificationEmail(email,username){
+  let verificationCode = generateVerificationCode(6)
+  verificationCodes[email] = verificationCode
+  console.log(verificationCodes);
+  let emailContent = `
+  <html>
+    <head>
+      <style>
+      @media (max-width: 900px) {
+        .cont {
+          width: 100vw;
+        }
+        #logo{
+          width: 20vw;
+        }
+      }
+      @media (min-width: 900px) {
+          .cont {
+            width: 40vw;
+          }
+          #logo{
+            width: 7vw;
+          }
+      }
+      </style>
+    </head>
+    <body>
+      <div class="cont" style="margin:auto; text-align:center; padding:1vw;">
+      <div style="text-align: center; width:20vw; margin:auto; border-bottom:0.2vw solid #1c1c1c;"><img id="logo" src='https://drive.google.com/uc?id=1VZC0v8NBMv36NX8bkIkyuV8VLgFYcweS' alt="logoText"></div>
+      <h1 style="margin-top:2vw;">Hello ${username}!</h1>
+      <p>Az <span style="font-weight: bold;">[SG gacha - The Epic Tale of Masters and Students]</span> fiókja hamarosan készenáll!</p>
+      <p>Kérjük azonosítsa az email címét a következő kóddal:</p>
+      <div style="font-weight: bolder; font-size:xx-large; margin:auto;">${verificationCode}</div>
+      <p style="font-size:small;">Jó szórakozást!</p>
+      <p style="font-size:small; text-align:right">-SGgacha team :)</p>
+    </div>
+    </body>
+  </html>`;
+  const mailOptions = {
+    from: "sagvarigacha.tetms@gmail.com",
+    to: email,
+    subject: "SGgacha verification code",
+    html: emailContent,
+  };
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      console.error("Error sending email: ", error);
+    } else {
+      console.log("Email sent: " + info.response);
+      }
+    });
+    //22 eamilt küldtem magamnak szóval most már csak lenézzük a kódot (kilogolja a console)
+}
+function makeNewAccount(email,password,username,Cid){
+  console.log("level 1");
+  db.run(`INSERT INTO account DEFAULT VALUES`, function (err) {
+    if (err) {
+      console.log(err);
+    } else {
+      db.run(`INSERT INTO rolls DEFAULT VALUES`);
+      db.run(`INSERT INTO deck DEFAULT VALUES`);
+      console.log("level 2");
+      db.run(`UPDATE account SET email = (?), password = (?), username = (?) WHERE id = (SELECT MAX(id) FROM account)`,[email,password,username], function (err) {
+        if (err) {
+          console.error(err.message);
+        } else {
+          console.log("level 3");
+          db.get(`SELECT * FROM account WHERE id = (SELECT MAX(id) FROM account)`,(err, row) => {
+            console.log("rows: ",row);
+            var data = {row:row,id:Cid}
+            io.emit("makeNewAccount", data)
+          });
+        }
+      });
+    }
+  });
+}
+let usersInLobby = []
+let connectedClients = [];
+let currentGameIDs = []
+let connectedToGameClients = []
+let whoComesFirst = {}
+
+//SSERVER ON CONNECT
+io.on('connection', (socket) => {
+  //console.log(`A user connected with ID: ${socket.id}`);
+  connectedClients.push(socket.id)
+  //console.log(connectedClients);
+
+  //MATCH
+  socket.on("makeMatchSocket", msg => {
+    console.log(msg);
+    io.emit("makeMatchSocket",msg)
+    currentGameIDs.push(msg)
+  })
+  for (let i = 0; i<currentGameIDs.length; i++){
+    socket.on(currentGameIDs[i], msg => {
+      //console.log("got game info: ",msg);
+      if(msg.includes("SocketConnectionEstablished")){
+        if(!connectedToGameClients.includes(msg)){
+          connectedToGameClients.push(msg)
+          console.log("got game info: ",msg);
+          console.log(connectedToGameClients);
+        }
+        
+        io.emit(currentGameIDs[i],JSON.stringify(connectedToGameClients))
+      }
+      else{
+        msg = String(msg)
+        if(msg.includes("trueReady")){
+          console.log(msg);
+            var ids = [msg.replace("trueReady",""), currentGameIDs[i].slice(20)]
+            var random = Math.random()
+            console.log(currentGameIDs[i]);
+            console.log(ids[0]);
+            console.log(ids[1]);
+            random < 0.5 ? whoComesFirst[currentGameIDs[i]] = ids[0] : whoComesFirst[currentGameIDs[i]] = ids[1]
+            console.log(`${whoComesFirst[currentGameIDs[i]]}isFirst`);
+            io.emit(currentGameIDs[i],`${whoComesFirst[currentGameIDs[i]]}isFirst`)
+        }
+        io.emit(currentGameIDs[i],msg)
+      }
+      
+    })
+  }
+
+
+  //DATABASE SOCKETS
+  var columnNames
+  db.all(`PRAGMA table_info(account)`, [], (err, rows) => {
+    columnNames = rows.map(row => row.name);
+    for (let i = 0; i<columnNames.length;i++){
+      socket.on(columnNames[i], msg => {
+        console.log("server got: ",msg);
+        getValueFromDB(msg.column,msg.id,msg.table)
+      })
+    }
+  });
+
+  db.all(`PRAGMA table_info(deck)`, [], (err, rows) => {
+    columnNames = rows.map(row => row.name);
+    for (let i = 0; i<columnNames.length;i++){
+      socket.on(columnNames[i], msg => {
+        console.log("server got: ",msg);
+        getValueFromDB(msg.column,msg.id,msg.table)
+      })
+    }
+  });
+
+
+  //LOBBY CONNECTION
+  socket.on("loadLobby", msg => {
+    usersInLobby.push(msg)
+    //console.log("sent users: ",usersInLobby);
+    io.emit("loadLobby", usersInLobby)
+  })
+  socket.on("reloadLobby", msg => {
+    //console.log("sent users and reloaded: ",usersInLobby);
+    io.emit("reloadLobby", usersInLobby)
+  })
+
+
+  //ACCOUNT MAKING
+  socket.on("getAccountData", data =>{
+    getAccountInfoFromDB(data.email,data.id)
+    console.log("ment a query");
+  })
+
+  socket.on("makeNewAccount", info => {
+    makeNewAccount(info.email,info.password,info.username,info.id)
+    console.log("új account: ",info)
+  })
+
+  //DISCONNECTIONS
+  socket.on("newPage", msg => {
+    console.log("new page: ", msg)
+    msg = msg.replace("DisconnectedWithSocket","")
+    var indexToSplice 
+    for (let i = 0; i< connectedToGameClients.length; i++){
+      if(connectedToGameClients[i].includes(msg)){
+        
+        indexToSplice = i
+      }
+    }
+    connectedToGameClients.splice(indexToSplice,1)
+      console.log(connectedToGameClients);
+  })
+  // Handle disconnection
+  socket.on('disconnect', msg => {
+    for (let i = 0; i < usersInLobby.length; i++){
+      if(usersInLobby[i].id == socket.id){
+        usersInLobby.splice(i,1)
+      }
+    }
+    console.log("new page: ", msg)
+    msg = msg.replace("DisconnectedWithSocket","")
+    var indexToSplice 
+    for (let i = 0; i< connectedToGameClients.length; i++){
+      if(connectedToGameClients[i].includes(msg)){
+        
+        indexToSplice = i
+      }
+    }
+    delete whoComesFirst[connectedToGameClients[indexToSplice]]
+    console.log(whoComesFirst);
+    connectedToGameClients.splice(indexToSplice,1)
+      console.log(connectedToGameClients);
+    //console.log(usersInLobby);
+
+    // Remove the client from the connectedClients object
+    connectedClients.splice(connectedClients.indexOf(socket.id),1)
+    console.log(connectedClients);
+  });
+
+});
+
+
+//NODE.JS---------------------------------------
+//DIFFERENT ANSWERS TO CLIENT
+//
+//(the function(err)... is a syntax thingy, as far as i know it doesnt work without it, its the same for every function dm them)
+
+let dataFromClient = null;
+
+// Handle POST request to change data in db
+app.post('/sendData', (req, res) => { //the '/xy' ('/sendData' here) is esentially the id of the "function", via that can the client connect to it (if that means sense)
+  dataFromClient = req.body; //req.body is the shit we sent (an object usually)
+  const query = `UPDATE ${dataFromClient.table} SET (${dataFromClient.column}) = (?) WHERE id = (?)`; //basic sql, format is db.run(sql,data (in place of the ?), function(err)...)
+  db.run(query,[dataFromClient.data,dataFromClient.id], function (err) {
+    if (err) {
+      console.error(err.message);
+      res.status(500).send(`Error storing data in ${dataFromClient.column}`);
+    } else {
+      res.sendStatus(200);
+    }
+  });
+});
+
+
+// Handle GET request to retrieve data (the db, currently)
+app.post('/getData', (req, res) => {
+  dataFromClient = req.body
+  if(dataFromClient.id != 0){ //if id = 0 we send the whole table over : just a specific item, (also if column is * we send all colums over obv)
+    db.all(`SELECT ${dataFromClient.column} FROM ${dataFromClient.table} WHERE id = (?)`,dataFromClient.id, (err, rows) => {
+      if (err) {
+        console.error(err.message);
+        res.status(500).send('Error fetching data from the database');
+      } else {
+        res.json({ data: rows });
+        //console.log(rows);
+      }
+    });
+  }
+  else {
+    db.all(`SELECT ${dataFromClient.column} FROM ${dataFromClient.table}`, (err, rows) => {
+      if (err) {
+        console.error(err.message);
+        res.status(500).send('Error fetching data from the database');
+      } else {
+        res.json({ data: rows });
+        //console.log(rows);
+      }
+    });
+  }
+  
+});
+
+//add empty row
+app.post('/api/add-row',(req,res) => {
+  table = req.body.table;
+  console.log("table:"+table + "req.body: " + req.body);
+  db.run(`INSERT INTO ${table} DEFAULT VALUES`, function (err) {
+    if (err) {
+      console.error(err.message);
+      res.status(500).send('Error');
+    } else {
+      res.sendStatus(200);
+    }
+  });
+});
+
+
+//delte all
+app.post('/delTable', (req, res) => {
+  table = req.body.table
+  db.run(`DROP TABLE ${table}`, function (err) {
+  if (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Database error' });
+  }
+
+  db.run(`CREATE TABLE IF NOT EXISTS ${table} ${tableStructures[table]}`);
+
+  res.json({ message: 'All rows deleted successfully' });
+  });
+});
+app.post('/delRow', (req, res) => {
+  table = req.body.table
+  id = req.body.id
+  db.run(`DELETE FROM ${table} WHERE id = (?)`, id, function (err) {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ error: 'Database error' });
+    }
+
+    res.json({ message: 'Row deleted successfully' });
+  });
+});
+
+server.listen(3000, () => {
+  console.log("Server listening on http://10.7.147.201:3000");
+ // console.log("Server listening on http://192.168.0.20:3000");
+});
